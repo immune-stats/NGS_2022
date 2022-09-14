@@ -1,0 +1,496 @@
+---
+output: 
+  html_document:
+    theme: flatly
+    toc: true
+    toc_depth: 3
+    toc_float:
+      collapsed: true
+      smooth_scroll: false
+    number_sections: false
+    code_download: true
+title: "Can we predict one's biological age?"
+subtitle: "Introduction to Linear Modelling"
+date: "September 16th, 2022"
+author:
+  - name: Joao Malato
+  - name: Nuno Sepulveda
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      warning = TRUE,
+                      message = TRUE, 
+                      fig.align = "center",
+                      fig.asp = 0.618,
+                      fig.width = 10,
+                      dpi = 200, 
+                      out.width = "75%")
+```
+
+
+# Libraries {-}
+
+```{r libraries, message=FALSE, warning=FALSE}
+library(here)       # easy directory management, as here("YOUR/FILE/PATH")
+library(data.table) # fast data wrangling
+library(magrittr)   # use of pipe operator `%>%`
+library(ggplot2)    # graphics
+library(nortest)    # normality assessment test
+```
+
+
+# Load data
+
+We will be analysing a subset of the whole blood data from 656 human individuals, made available by [Hannun et al. (2013)](https://www.sciencedirect.com/science/article/pii/S1097276512008933?via%3Dihub).
+
+```{r}
+# base R
+mdna <- read.csv(here("data/methDNA_data_Hannun_etal_2013.csv"), header = TRUE)
+
+# alternative: using data.table's fread()
+# mdna <- fread(here("data/methDNA_data_Hannun_etal_2013.csv"), header = TRUE)
+```
+
+```{r}
+# look at first 8 cols from the data
+head(mdna[, 1:8])
+```
+
+Variables:
+
+* `GEO.ID`: Unique identifier for each one of the `r nrow(mdna)` participants
+* `Age`: Age of participants, in years
+* `Gender`: Gender of each individual, binary values for female (`F`) and male (`M`)
+* `Ethnicity`: Ethnic group of each individual, binary identifying European participants (`Caucasian`) and Mexican participants (`Hispanic`)
+* `cgXXXXXXXX`: CpG marker, each one indicating the methylation values, in percentage
+
+```{r}
+# get a vector with all column names with their pattern starting with "cg" (i.e., the names of all CpG probes)
+vec_probe <- grep("^cg", colnames(mdna), value = TRUE)
+```
+
+
+# Quick EDA
+
+Things to look for:
+
+1. Look at the population-related variables
+    + Are there sampling differences between gender and/or ethnicity?
+2. Look at age distribution
+    + Does age change with gender/ethnicity?
+3. Look at methylation levels
+    + Should we transform the data?
+    + Are the values correlated with age?
+    + Could these values by affected by gender/ethnicity?
+
+
+## Demographics and age
+
+```{r}
+# Look through the group categories
+table(mdna$Gender)
+table(mdna$Ethnicity)
+
+# gender and ethnicity
+table(mdna$Ethnicity, mdna$Gender)
+
+# proportions
+round(prop.table(table(mdna$Ethnicity, mdna$Gender), margin = 2), 2)
+round(prop.table(table(mdna$Ethnicity, mdna$Gender), margin = 1), 2)
+
+# Pearson's Chi-squared test
+chisq.test(table(mdna$Gender, mdna$Ethnicity))
+```
+
+
+```{r}
+# Gender and Age
+boxplot(mdna$Age ~ mdna$Gender)
+
+quantile(subset(mdna, Gender == "F")$Age)
+quantile(subset(mdna, Gender == "M")$Age)
+
+# Mann-Whitney U test
+wilcox.test(mdna$Age ~ mdna$Gender)
+```
+
+```{r}
+# ggplot2 alternatives
+
+# boxplot:
+# ggplot(mdna, aes(x = Gender, y = Age)) +
+#   geom_boxplot()
+
+# density plot:
+# ggplot(mdna, aes(Age, fill = Gender)) +
+#   geom_density(alpha = 0.5)
+```
+
+
+```{r}
+# Ethnicity and Age
+boxplot(mdna$Age ~ mdna$Ethnicity)
+
+quantile(subset(mdna, Ethnicity == "Caucasian")$Age)
+quantile(subset(mdna, Ethnicity == "Hispanic")$Age)
+
+# Mann-Whitney U test
+wilcox.test(mdna$Age ~ mdna$Ethnicity)
+```
+
+```{r}
+# ggplot2 alternatives
+
+# boxplot:
+# ggplot(mdna, aes(x = Ethnicity, y = Age)) +
+#   geom_boxplot()
+
+# density plot:
+# ggplot(mdna, aes(Age, fill = Ethnicity)) +
+#   geom_density(alpha = 0.5)
+```
+
+
+## DNA methylation values
+
+```{r}
+# base summary
+summary(mdna[, vec_probe])
+
+# limits of all CpG values
+range(apply(mdna[, vec_probe], 2, min), 
+      apply(mdna[, vec_probe], 2, max))
+```
+
+```{r}
+# try: 
+
+# plot(apply(mdna[, vec_probe], 2, min), ylim = c(0, 1), pch = 16, col = 2, type = "l")
+# lines(apply(mdna[, vec_probe], 2, max), pch = 16, col = 3)
+```
+
+The values are given as methylated percentage.
+
+**Question:** Why should we transform the CpG values?
+
+```{r}
+# function for the log-odds transformation
+logodds_trans <- function(p) log(p / (1 - p))
+```
+
+```{r}
+# transform the percentage values into log-odds
+probe_logodds <- apply(mdna[, vec_probe], 2, logodds_trans)
+
+# create data frame to work with
+mdna_logodds <- data.frame(mdna[, 1:4], probe_logodds)
+```
+
+Henceforth we will be using the `mdna_logodds` data.
+
+```{r}
+# CpG probes correlation with Age
+vec_cor_values <- sapply(seq(vec_probe), function(x) cor(mdna_logodds$Age, mdna_logodds[, vec_probe[x]], method = "spearman"))
+
+# look at the correlation values between each probe and Age
+plot(vec_cor_values, ylim = c(-1, 1), ylab = "Spearman's Correlation")
+abline(h = 0, lty = 2)
+
+# density plot
+plot(density(vec_cor_values), xlab = "Spearman's Correlation", xlim = c(-1, 1))
+
+# save the CpG probes ordered by their absolute correlation value
+vec_probe_cor <- vec_probe[order(abs(vec_cor_values), decreasing = TRUE)]
+```
+
+**Question:** What does having a high positive/negative correlation might indicate?
+
+# Questions
+
+1. Main question: Can we predict one's biological age?
+2. Can we predict the age of an individual based on the methylation level of a given CpG probe?
+3. Does gender pose an effect in this prediction?
+4. Does ethnicity pose an effect in this prediction?
+
+
+# **Exercise 1:** Simple linear regression
+
+For this exercise, we will study the relation between age and methylation levels from specific probes.
+
++ Perform a simple linear regression to study the (linear) relationship between Age and a single specific marker (hint: use the function `lm()`)
++ For each case, what is the model's formula (hint: `coef()` or `coefficients()`)
++ Model diagnosis
+    - Look at the residuals (hint: `resid()` or `residuals()`) 
+    - Assess their normality (hint: `shapiro.test()`)
++ Interpret the results
+    - What are the models' slopes?
+    - What are the model predictions?
+    - What are the predicted ages of someone with, for any inferred marker, methylation levels of 10%, 25%, 50%, 75%, and 90%? (hint: `predict()` with the *newdata* argument)
+
+
+## First probe
+
+Linear model using the first CpG probe, `r vec_probe[1]`.
+
+```{r}
+# CpG: cg17568996
+
+
+# linear regression: formula as Y ~ x
+# fit1 <- lm(___, data = mdna_logodds)
+
+
+# look at the models' summary
+# summary(___)
+```
+
+**Questions:**
+
+1. How do you interpret the *Estimate* values?
+2. Which hypotheses tests are the p-values shown here referring to? What can we infer from the results?
+3. What is the difference between the *Multiple R-squared* and *Adjusted R-squared*?
+
+We can look at the model's residuals distribution. Ideally, the distribution should be symmetric around zero (Normal distribution with $\mu = 0$). We can assess this visually, through the use of a density plot, histogram, violin plot, boxplot, or even a quantile-quantile plot (Q-Q plot).
+
+```{r}
+# residual analysis
+# ___
+
+
+# density plot
+# plot(density(___))
+
+
+# Q-Q plot
+# qqnorm(___)
+# qqline(___)
+```
+
+Alternatively, we can apply formal hypothesis testing to infer on the residuals' normality.
+
+```{r}
+# proposal 1: Shapiro-Wilk normality test
+# ___
+
+
+# proposal 2: Lilliefors (Kolmogorov-Smirnov) normality test
+# nortest::lillie.test(___)
+```
+
+Assuming this linear relation between age and the `r vec_probe[1]` methylation values, what are the model fitted values (i.e., the prediction of the mean response value to the coefficient values used to formulate the model)?
+
+```{r}
+# pred_fit1 <- ___
+
+
+# look at the fitted results
+# ___
+```
+
+What are the predicted ages of someone with `r vec_probe[1]` methylation levels of 10%, 25%, 50%, 75%, and 90%?
+
+```{r}
+# vector with percentages of interest
+methylation_interest <- c(0.1, 0.25, 0.5, 0.75, 0.9)
+# don't forget to transform the data!
+
+
+# predictions_fit1 <- ___
+```
+
+
+## Top probe correlated with age
+
+Perform the same analysis with the highest age-correlated probe, `r vec_probe_cor[1]`.
+
+```{r}
+# CpG probe: cg22736354
+
+# linear regression
+# fit2 <- ___
+
+
+# summary
+# ___
+```
+
+```{r}
+# residuals analysis
+# ___
+```
+
+```{r}
+# pred_fit2 <- ___
+
+
+# fitted results
+# ___
+```
+
+```{r}
+# predictions_fit2 <- ___
+```
+
+
+## Comparing results
+
+From the results of the two linear models what do you see?
+
++ Differences in the summary, R-squared, or coefficients?
++ How about the residuals?
+
+```{r}
+# try:
+
+# par(mfrow = c(1, 2))
+# plot(mdna_logodds$Age, predict(fit1), xlim = c(0, 100), ylim = c(0, 100), xlab = "Age, years", ylab = "Fitted age, fit1")
+# abline(lm(predict(fit1) ~ mdna_logodds$Age))
+# abline(0,1, lty = 2, col = "gray55")
+# plot(mdna_logodds$Age, predict(fit2), xlim = c(0, 100), ylim = c(0, 100), xlab = "Age, years", ylab = "Fitted age, fit2")
+# abline(lm(predict(fit2) ~ mdna_logodds$Age))
+# abline(0,1, lty = 2, col = "gray55")
+# par(mfrow = c(1, 1))
+```
+
+
+# **Exercise 2:** Multiple linear regression
+
+For this exercise, we will perform the same analysis for the `r vec_probe_cor[1]` probe, only this time the variables for gender and ethnicity will be included in the model.
+
++ Perform a multiple linear regression
++ Model diagnosis
++ Compare against the previous model
+
+
+## **2.1** Adding the coefficient for gender
+
+```{r}
+# CpG: cg22736354
+
+
+# define gender as a factor with "female" as reference
+mdna_logodds$Gender <- relevel(factor(mdna_logodds$Gender), ref = "F")
+
+
+# fit the model
+# fit2_g <- ___
+
+
+# summary
+# ___
+
+```
+
+```{r}
+# assessing normality of residuals
+# ___
+```
+
+```{r}
+# predictions for age in each gender
+# pred_g_female <- ___
+# pred_g_male <- ___
+```
+
+
+## **2.2** Adding the coefficient for ethnicity
+
+```{r}
+# CpG: cg22736354
+
+
+# define gender as a factor with the caucasian group as reference level
+mdna_logodds$Ethnicity <- relevel(factor(mdna_logodds$Ethnicity), ref = "Caucasian")
+
+
+# fit the model
+# fit2_e <- ___
+
+
+# summary
+# ___
+
+```
+
+```{r}
+# assessing normality of residuals
+# ___
+```
+
+```{r}
+# predictions for age in europeans and mexicans
+# pred_e_cauc <- ___
+# pred_e_hisp <- ___
+```
+
+```{r}
+# try:
+
+# plot(mdna_logodds$Age, predict(fit2_e), xlim = c(0, 100), ylim = c(0, 100), col = mdna_logodds$Ethnicity, pch = 16)
+# abline(lm(predict(fit2_e) ~ mdna_logodds$Age))
+# abline(0,1, lty = 2)
+
+# plot(mdna_logodds$Age, predict(fit2_e), xlim = c(0, 100), ylim = c(0, 100), col = mdna_logodds$Ethnicity, pch = 16)
+# abline(0,1, lty = 2)
+# abline(lm(pred_e_cauc ~ mdna_logodds$Age), lwd = 3, col = 1)
+# abline(lm(pred_e_hisp ~ mdna_logodds$Age), lwd = 3, col = 2)
+```
+
+
+## **2.3** Interaction Interaction `cg22736354:Ethnicity`
+
++ Try to add an interaction term between the two covariates used in the model
++ Estimate the values for $\beta_0$ and $\beta_1$ on each population group
+
+```{r}
+# adding ethnicity interaction
+# fit3 <- ___
+
+
+# summary
+# ___
+```
+
+```{r}
+# predictions for age in the two groups
+# ___
+```
+
+**Question:** What is the difference between this model and two independent simple linear regression models for each group?
+
+
+# Extending the analysis
+
+```{r}
+# run a simple linear model on every CpG probe available
+
+
+# define empty data frame
+# simple_lm <- data.frame()
+
+
+# run for loop
+# for(i in seq(vec_probe)) {
+#   
+#   # define formula to use
+#   fit_formula <- as.formula(paste0("Age ~ ", vec_probe[i]))
+#   # fit linear model
+#   fit <- lm(fit_formula, data = mdna_logodds)
+#   # model summary
+#   fit_summary <- summary(fit)
+#   
+#   # create a simple data frame with information about the model
+#   out <- data.frame(coef = vec_probe[i], 
+#                     estimate = fit_summary$coefficients[2,1], 
+#                     estimate_p = fit_summary$coefficients[2,4], 
+#                     r_rquared = fit_summary$r.squared,
+#                     r_rquared_adj = fit_summary$adj.r.squared,
+#                     aic = AIC(fit),
+#                     bic = BIC(fit)
+#                     )
+#   
+#   # join rows of each model in output
+#   simple_lm <- rbind(simple_lm, out)
+# }
+```
