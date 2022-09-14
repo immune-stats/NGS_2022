@@ -1,0 +1,290 @@
+---
+output: 
+  html_document:
+    theme: flatly
+    toc: true
+    toc_depth: 3
+    toc_float:
+      collapsed: true
+      smooth_scroll: false
+    number_sections: false
+    code_download: true
+title: "Can we predict one's biological age?"
+subtitle: "Multiple linear regression"
+date: "September 16th, 2022"
+author:
+  - name: Joao Malato
+  - name: Nuno Sepulveda
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      warning = TRUE,
+                      message = TRUE, 
+                      fig.align = "center",
+                      fig.asp = 0.618,
+                      fig.width = 10,
+                      dpi = 200, 
+                      out.width = "75%")
+```
+
+
+# Libraries {-}
+
+```{r libraries, message=FALSE, warning=FALSE}
+library(here)       # easy directory management, as here("YOUR/FILE/PATH")
+library(data.table) # fast data wrangling
+library(magrittr)   # use of pipe operator `%>%`
+library(ggplot2)    # graphics
+library(nortest)    # normality assessment test
+library(MASS)       # stepwise regression
+```
+
+
+# Load data
+
+Still using the same subset of whole blood data from 656 human individuals, made available by [Hannun et al. (2013)](https://www.sciencedirect.com/science/article/pii/S1097276512008933?via%3Dihub).
+
+
+```{r}
+# base R
+# mdna <- read.csv(here("data/methDNA_data_Hannun_etal_2013.csv"), header = TRUE)
+mdna_logodds <- read.csv(here("data/logodds_methDNA_data_Hannun_etal_2013.csv"), header = TRUE)
+```
+
+```{r}
+# look at first 8 cols from the data
+head(mdna_logodds[, 1:8])
+```
+
+Variables:
+
+* `GEO.ID`: Unique identifier for each one of the `r nrow(mdna_logodds)` participants
+* `Age`: Age of participants, in years
+* `Gender`: Gender of each individual, binary values for female (`F`) and male (`M`)
+* `Ethnicity`: Ethnic group of each individual, binary identifying European participants (`Caucasian`) and Mexican participants (`Hispanic`)
+* `cgXXXXXXXX`: CpG marker, each one indicating the methylation values, in percentage
+
+```{r}
+# binary variables to factors with defined reference
+mdna_logodds$Gender <- relevel(factor(mdna_logodds$Gender), ref = "F")
+mdna_logodds$Ethnicity <- relevel(factor(mdna_logodds$Ethnicity), ref = "Caucasian")
+```
+
+```{r}
+# get a vector with all column names with their pattern starting with "cg" (i.e., the names of all CpG probes)
+vec_probe <- grep("^cg", colnames(mdna_logodds), value = TRUE)
+
+# ordered by correlation with age
+vec_cor_values <- sapply(seq(vec_probe), function(x) cor(mdna_logodds$Age, mdna_logodds[, vec_probe[x]], method = "spearman"))
+# save the CpG probes ordered by their absolute correlation value
+vec_probe_cor <- vec_probe[order(abs(vec_cor_values), decreasing = TRUE)]
+```
+
+
+# Questions
+
+1. Main question: Can we predict one's biological age?
+2. What if we want to add more variables to our model?
+3. Which markers should be added? More than one? All of them? Which ones?
+4. Is gender significant in out model?
+5. Is the participants' ethnic group significant in out model?
+6. What makes a good/better model?
+
+
+# **Exercise 1:** Which coefficients to add?
+
++ Fit a model with gender, ethnicity, and the first five CpG probes in the data
++ Fit a similar model but this time include the top 5 age-correlated markers
++ Compare the outputs of the two models
+    + Which one is more accurate when predicting the biological age of an individual? (hint: `predict()`)
+    + What are the values of AIC for each model? (hint: `AIC()` or `extractAIC()`)
+
+
+```{r}
+# first 5 CpGs in the data:
+# cg17568996 + cg02245378 + cg14093936 + cg15642326 + cg24991452
+
+# fit the model
+# fit5 <- ___
+
+# summary
+# ___
+```
+
+
+```{r}
+# top 5 correlated CpGs (decreasing order):
+# cg22736354 + cg15804973 + cg06493994 + cg08090640 + cg09809672
+
+# fit the models
+# fit5_cor <- ___
+
+# summary
+# ___
+```
+
+
+```{r}
+# try:
+
+# Visualise the fitted values against the age
+
+# par(mfrow = c(1,2))
+# plot(mdna_logodds$Age, predict(fit5), xlim = c(0, 100), ylim = c(0, 100), xlab = "Age, years", main = "fit5")
+# abline(lm(predict(fit5) ~ mdna_logodds$Age))
+# abline(0, 1, col = "gray55", lty = 2)
+# plot(mdna_logodds$Age, predict(fit5_cor), xlim = c(0, 100), ylim = c(0, 100), xlab = "Age, years", main = "fit5_cor")
+# abline(lm(predict(fit5_cor) ~ mdna_logodds$Age))
+# abline(0, 1, col = "gray55", lty = 2)
+# par(mfrow = c(1, 1))
+
+
+# check the correlation between the fitted values and age
+# cor(mdna_logodds$Age, predict(fit5))
+# cor(mdna_logodds$Age, predict(fit5_cor))
+```
+
+
+# **Exercise 2:** Model with all variables
+
++ Fit a model with all the variables available in the dataset (with the exception of the individual ID column) (hint: to facilitate you can add a 'dot' to the right side of the linear regression formula, as `lm(Age ~ .)`)
++ Compare the outputs of the model with the previous ones?
+    + Is the model better?
+    + What are the AIC values? (hint: `extractAIC()`)
+    + Can you improve the model?
+
+```{r}
+# fit the full model
+# fit_full <- ___
+
+# summary and model diagnosis
+# ___
+```
+
+
+**Questions:**
+
+  1. Are all the coefficients in the model needed?
+  2. Is there a way to automate the "selection" of variables to use in the model?
+
+
+# **Exercise 3:** Stepwise regression
+
+Let's try to automate the process of variable selection. Since we already have a full model, we will also need an null model (regression with only the intercept).
+
++ Fit a null model (hint: `lm(Age ~ 1)`)
+
+```{r}
+# fit a null model
+# fit_null <- ___
+
+# summary
+# ___
+```
+
+**Question:** What is the formula for the null model? What is the value for $\beta_0$?
+
+
++ Use the `step()` function (*{stats}* package), or the `stepAIC()` function (*{MASS}* package)
+    + Look through the function's help page to better understand how to use it
++ Perform a stepwise selection
+    1. Forward selection (hint1: `direction = "forward"`; hint2: in this process you start with the null model and add covariates)
+    2. Backwards elimination (hint: `direction = "backward"`; hint2: here you start with the full model and remove covariates)
+    3. Combination of both (hint: `direction = "both"`)
++ Compare the models
+    + AIC values
+    + Do the models chose the same variables? The same number of variables?
+    + Which one is better at predicting biological age?
+
+
+Note that the stepwise regression is a test-based procedure for variable selection.
+
+```{r}
+# forward selection
+# fit_step_forward <- stepAIC(___)
+
+
+# backward elimination
+# fit_step_backward <- ___
+
+
+# using both methods iteratively
+# fit_step_both <- ___
+```
+
+
+```{r}
+# compare results
+# ___
+```
+
+
+# Extending the analysis
+
+```{r}
+# does it improve with Gender?
+
+
+# define empty data frame
+# gender_lm <- data.frame()
+
+
+# run for loop
+# for(i in seq(vec_probe)) {
+#   
+#   fit_formula <- as.formula(paste0("Age ~ Gender + ", vec_probe[i]))
+#   fit <- lm(fit_formula, data = mdna_logodds)
+#   fit_summary <- summary(fit)
+#   
+#   out <- data.frame(coef = vec_probe[i], 
+#                     genderM = fit_summary$coefficients[2,1], 
+#                     genderM_p = fit_summary$coefficients[2,4],
+#                     estimate = fit_summary$coefficients[3,1], 
+#                     estimate_p = fit_summary$coefficients[3,4], 
+#                     r_rquared = fit_summary$r.squared,
+#                     r_rquared_adj = fit_summary$adj.r.squared,
+#                     aic = AIC(fit),
+#                     bic = BIC(fit)
+#                     )
+#   
+#   gender_lm <- rbind(gender_lm, out)
+# }
+```
+
+```{r}
+# does it improve with Ethnicity?
+
+
+# define empty data frame
+# ethnicity_lm <- data.frame()
+
+
+# run for loop
+# for(i in seq(vec_probe)) {
+#   
+#   fit_formula <- as.formula(paste0("Age ~ Ethnicity + ", vec_probe[i]))
+#   fit <- lm(fit_formula, data = mdna_logodds)
+#   fit_summary <- summary(fit)
+#   
+#   out <- data.frame(coef = vec_probe[i], 
+#                     ethnicityHisp = fit_summary$coefficients[2,1], 
+#                     ethnicityHisp_p = fit_summary$coefficients[2,4],
+#                     estimate = fit_summary$coefficients[3,1], 
+#                     estimate_p = fit_summary$coefficients[3,4], 
+#                     r_rquared = fit_summary$r.squared,
+#                     r_rquared_adj = fit_summary$adj.r.squared,
+#                     aic = AIC(fit),
+#                     bic = BIC(fit)
+#                     )
+#   
+#   ethnicity_lm <- rbind(ethnicity_lm, out)
+# }
+```
+
+
+## `ifelse("I'm ahead of schedule", DO, SKIP)`
+
++ Look for any potential influential points (hint: Cook's distance)
++ Would an interaction term further improve our the models?
++ Problems of correlation? Multicollinearity?
