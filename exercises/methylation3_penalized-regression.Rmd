@@ -94,8 +94,8 @@ $$\text{Residual Sum of Squares} + \lambda \times \left[ (1-\alpha)(\beta_1^2 + 
 
 ```{r}
 # define response and explanatory variables
-# y <- ___
-# x <- ___
+y <- mdna_logodds$Age
+x <- as.matrix(mdna_logodds[, vec_probe])
 ```
 
 
@@ -109,11 +109,10 @@ Ridge regression requires the data to be standardised such that each predictor v
 
 ```{r}
 # fit a ridge regression
-# ridge_fit <- glmnet(x = ___, y = ___, alpha = ___, standardize = TRUE, family = "gaussian")
-
+ridge_fit <- glmnet(x = x, y = y, alpha = 0, standardize = TRUE, family = "gaussian")
 
 # visualise the results
-# ___
+plot(ridge_fit, xvar = "lambda")
 ```
 
 **Questions:** 
@@ -133,29 +132,34 @@ Ridge regression requires the data to be standardised such that each predictor v
 
 ```{r}
 # fit ridge regression
-# cv_ridge_fit <- cv.glmnet(x = ___, y = ___, alpha = ___, standardize = TRUE, family = "gaussian", type.measure = "mse", nfold = 10)
-
+cv_ridge_fit <- cv.glmnet(x = x, y = y, alpha = 0, standardize = TRUE, family = "gaussian", type.measure = "mse", nfold = 10)
 
 # visualise the results
-# ___
+plot(cv_ridge_fit)
 ```
 
 ```{r}
 # lambdas
-# ___
+cv_ridge_fit$lambda.min
+cv_ridge_fit$lambda.1se
+
+plot(ridge_fit, xvar = "lambda")
+abline(v = log(c(cv_ridge_fit$lambda.min, cv_ridge_fit$lambda.1se)), lty = 2)
 
 
 # look at the coefficient values for the chosen lambdas
-# cv_ridge_coef <- coef(___, s = ___)
+cv_ridge_coef <- coef(cv_ridge_fit, s = cv_ridge_fit$lambda.1se)
 
 
 # fitted values
-# cv_ridge_pred <- predict(object = ___, s = ___, newx = x)
+cv_ridge_pred <- predict(object = cv_ridge_fit, 
+                         s = cv_ridge_fit$lambda.1se, 
+                         newx = x)
 ```
 
 ```{r}
 # calculate the mean-squared error (MSE) for this model
-# ___
+mean((mdna_logodds$Age - cv_ridge_pred)^2)
 ```
 
 ```{r}
@@ -165,9 +169,9 @@ Ridge regression requires the data to be standardised such that each predictor v
 # cor(y, cv_ridge_pred[, 1], method = "spearman")
 
 # visualise the relation between fitted values and the real age of the patients
-# plot(y, cv_ridge_pred[, 1], xlim = c(0, 100), ylim = c(0, 100))
-# abline(lm(cv_ridge_pred[, 1] ~ y))
-# abline(0, 1, lty = 2, col = "gray55")
+plot(y, cv_ridge_pred[, 1], xlim = c(0, 100), ylim = c(0, 100))
+abline(lm(cv_ridge_pred[, 1] ~ y))
+abline(0, 1, lty = 2, col = "gray55")
 ```
 
 
@@ -179,11 +183,13 @@ Ridge regression requires the data to be standardised such that each predictor v
 
 ```{r}
 # fit a LASSO regression
-# lasso_fit <- ___
+lasso_fit <- glmnet(x = x, y = y, alpha = 1, standardize = TRUE, family = "gaussian")
 
 
 # visualise the results
-# ___
+plot(lasso_fit, xvar = "lambda")
+
+coef(lasso_fit)
 ```
 
 **Question:** As $\lambda$ increases, this time what happens to the coefficients estimates?
@@ -201,24 +207,31 @@ Ridge regression requires the data to be standardised such that each predictor v
 
 ```{r}
 # fit LASSO regression
-# cv_lasso_fit <- ___
+cv_lasso_fit <- cv.glmnet(x = x, 
+                          y = y, 
+                          alpha = 1, 
+                          standardize = TRUE, 
+                          family = "gaussian", 
+                          type.measure = "mse", 
+                          nfold = 10)
 
 
 # visualise the results
-# ___
+plot(cv_lasso_fit)
 ```
 
 ```{r}
 # lambdas
-# ___
+cv_lasso_fit$lambda.min
+cv_lasso_fit$lambda.1se
 
 
 # look at the coefficient values for the chosen lambdas
-# cv_lasso_coef <- ___
+cv_lasso_coef <- coef(cv_lasso_fit, s = cv_lasso_fit$lambda.1se)
 
 
 # fitted values
-# cv_lasso_pred <- ___
+cv_lasso_pred <- predict(cv_lasso_fit, s = cv_lasso_fit$lambda.1se, newx = x)
 ```
 
 ```{r}
@@ -271,7 +284,7 @@ Rather than "guessing" the best value of alpha, the best approach is to loop thr
 alphas <- seq(0, 1, 0.01)
 
 # loop sequence to generate the results at each alpha
-# cv_fit_en <- lapply(seq(alphas), function(i) cv.glmnet(x = x, y = y, alpha = alphas[i], standardize = TRUE, family = "gaussian", type.measure = "mse", nfold = 10))
+cv_fit_en <- lapply(seq(alphas), function(i) cv.glmnet(x = x, y = y, alpha = alphas[i], standardize = TRUE, family = "gaussian", type.measure = "mse", nfold = 10))
 ```
 
 ```{r}
@@ -284,44 +297,44 @@ alphas <- seq(0, 1, 0.01)
 
 ```{r}
 # look at the optimal values for lambda
-# vec_lambda_en <- sapply(seq_along(cv_fit_en), function(i) cv_fit_en[[i]]$lambda.1se)
+vec_lambda_en <- sapply(seq_along(cv_fit_en), function(i) cv_fit_en[[i]]$lambda.1se)
 
 
 # loop to estimate the fitted values of each 10-fold cross validated model
-# pred_en <- lapply(seq_along(cv_fit_en), function(i) predict(cv_fit_en[[i]], s = vec_lambda_en[i], newx = x))
+pred_en <- lapply(seq_along(cv_fit_en), function(i) predict(cv_fit_en[[i]], s = vec_lambda_en[i], newx = x))
 
 
 # estimate the MSE of each model
-# mse_en <- sapply(seq_along(cv_fit_en), function(i) mean((mdna_logodds$Age - pred_en[[i]])^2))
+mse_en <- sapply(seq_along(cv_fit_en), function(i) mean((mdna_logodds$Age - pred_en[[i]])^2))
 
 
 # visualise the results
-# plot(mse_en, type = "l")
+plot(mse_en, type = "l")
 
 
 # minimum MSE value
-# min(mse_en)
+min(mse_en)
 
 
 # minimum MSE position
-# which.min(mse_en)
+which.min(mse_en)
 ```
 
 ```{r}
 # select the model with lower MSE
-# cv_fit_elastic_net <- cv_fit_en[[which.min(mse_en)]]
+cv_fit_elastic_net <- cv_fit_en[[which.min(mse_en)]]
 
 
 # lambda
-# ___
+cv_fit_elastic_net$lambda.1se
 
 
 # look at the coefficient values for the lambda
-# cv_fit_elastic_net_coef <- ___
+# cv_fit_elastic_net_coef <- coef()
 
 
 # fitted values
-# cv_fit_elastic_net_pred <- ___
+# cv_fit_elastic_net_pred <- 
 ```
 
 
