@@ -1,0 +1,343 @@
+---
+output: 
+  html_document:
+    theme: flatly
+    toc: true
+    toc_depth: 3
+    toc_float:
+      collapsed: true
+      smooth_scroll: false
+    number_sections: false
+    code_download: true
+title: "Can we predict one's biological age?"
+subtitle: "Ridge, LASSO, and Elastic-Net regression"
+date: "September 16th, 2022"
+author:
+  - name: Joao Malato
+  - name: Nuno Sepulveda
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      warning = TRUE,
+                      message = TRUE, 
+                      fig.align = "center",
+                      fig.asp = 0.618,
+                      fig.width = 10,
+                      dpi = 200, 
+                      out.width = "75%")
+```
+
+
+# Libraries {-}
+
+```{r libraries, message=FALSE, warning=FALSE}
+library(here)       # easy directory management, as here("YOUR/FILE/PATH")
+library(data.table) # fast data wrangling
+library(magrittr)   # use of pipe operator `%>%`
+library(ggplot2)    # graphics
+library(nortest)    # normality assessment test
+library(glmnet)     # penalised regression models
+```
+
+
+# Load data
+
+Still using the same subset of whole blood data from 656 human individuals, made available by [Hannun et al. (2013)](https://www.sciencedirect.com/science/article/pii/S1097276512008933?via%3Dihub).
+
+```{r}
+# base R
+# mdna <- read.csv(here("data/methDNA_data_Hannun_etal_2013_2.csv"), header = TRUE)
+mdna_logodds <- read.csv(here("data/logodds_methDNA_data_Hannun_etal_2013.csv"), header = TRUE)
+```
+
+```{r}
+# look at first 8 cols from the data
+head(mdna_logodds[, 1:8])
+```
+
+Variables:
+
+* `GEO.ID`: Unique identifier for each one of the `r nrow(mdna_logodds)` participants
+* `Age`: Age of participants, in years
+* `Gender`: Gender of each individual, binary values for female (`F`) and male (`M`)
+* `Ethnicity`: Ethnic group of each individual, binary identifying European participants (`Caucasian`) and Mexican participants (`Hispanic`)
+* `cgXXXXXXXX`: CpG marker, each one indicating the methylation values, in percentage
+
+```{r}
+# binary variables to factors with defined reference
+mdna_logodds$Gender <- relevel(factor(mdna_logodds$Gender), ref = "F")
+mdna_logodds$Ethnicity <- relevel(factor(mdna_logodds$Ethnicity), ref = "Caucasian")
+```
+
+
+```{r}
+# get a vector with all column names with their pattern starting with "cg" (i.e., the names of all CpG probes)
+vec_probe <- grep("^cg", colnames(mdna_logodds), value = TRUE)
+
+# ordered by correlation with age
+vec_cor_values <- sapply(seq(vec_probe), function(x) cor(mdna_logodds$Age, mdna_logodds[, vec_probe[x]], method = "spearman"))
+# save the CpG probes ordered by their absolute correlation value
+vec_probe_cor <- vec_probe[order(abs(vec_cor_values), decreasing = TRUE)]
+```
+
+
+# Penalized regression
+
+For this section you will be using the [*glmnet*](https://cloud.r-project.org/web/packages/glmnet/index.html) package. This is but an introduction to an versatile package that is used to fit Ridge, LASSO or Elastic-Net paths to more than just linear regression.
+
+How to distinguish between Ridge and LASSO regression in R:
+
+In the provided formulas we can define the type of regression we want, depending on the tuning parameter $\lambda$ used, as $\lambda_1$ for LASSO and $\lambda_2$ for Ridge, respectively. Instead of using two different arguments for $\lambda$, the _glmnet_ functions (`glmnet()` and the `cv.glmnet()`) define an Elastic-Net penalty parameter/argument, $\alpha$, that defines the LASSO regression (`alpha = 1`) and the Ridge regression (`alpha = 0`). This argument can thus vary between 0 and 1, providing a mixture of the two penalties. Simply put, the function solves for
+$$\text{Residual Sum of Squares} + \lambda \times \left[ (1-\alpha)(\beta_1^2 + \ldots + \beta_p^2) + \alpha(|\beta_1| + \ldots + |\beta_p|) \right] \ .$$
++ Before jumping into the exercises, note that instead of the formula `y ~ x` we are used to, the _glmnet_ functions use independent arguments `y`, and `x`. The latter should be a matrix (hint: `as.matrix()`).
+
+```{r}
+# define response and explanatory variables
+y <- mdna_logodds$Age
+x <- as.matrix(mdna_logodds[, vec_probe])
+```
+
+
+# Ridge regression
+
+Ridge regression requires the data to be standardised such that each predictor variable has mean of 0 and standard deviation of 1.
+
++ Fit a Ridge regression using the `glmnet()` function
+    + Define arguments for `x`, `y`, `alpha`, `standardize`, and `family`
++ Look at the results (hint: `plot()`)
+
+```{r}
+# fit a ridge regression
+ridge_fit <- glmnet(x = x, y = y, alpha = 0, standardize = TRUE, family = "gaussian")
+
+# visualise the results
+plot(ridge_fit, xvar = "lambda")
+```
+
+**Questions:** 
+
+  1. As $\lambda$ increases, what happens to the coefficients estimates?
+  2. How do we chose the optimal tuning parameter, $\lambda$?
+
+---
+
+
++ Perform a 10-fold cross validation to determine the optimal value for lambda (hint: `cv.glmnet()`)
++ Look at the results
++ Identify the `lambda` that gives the lowest Mean-Squared Error (MSE)
+    + What is the value of the MSE?
++ How close are the model predictions? Are they better than the previous ones we've worked on?
+
+
+```{r}
+# fit ridge regression
+cv_ridge_fit <- cv.glmnet(x = x, y = y, alpha = 0, standardize = TRUE, family = "gaussian", type.measure = "mse", nfold = 10)
+
+# visualise the results
+plot(cv_ridge_fit)
+```
+
+```{r}
+# lambdas
+cv_ridge_fit$lambda.min
+cv_ridge_fit$lambda.1se
+
+log(cv_ridge_fit$lambda.min)
+log(cv_ridge_fit$lambda.1se)
+
+# look at the coefficient values for the chosen lambdas
+cv_ridge_coef <- coef(cv_ridge_fit, s = cv_ridge_fit$lambda.1se)
+as.data.table(as.matrix(cv_ridge_coef), keep.rownames = "coef")[-1,] %>% 
+  ggplot(aes(s1, reorder(coef, s1))) +
+  geom_point() +
+  geom_vline(xintercept = 0, lty = 2, col = "gray55")
+
+# fitted values
+cv_ridge_pred <- predict(object = cv_ridge_fit, s = cv_ridge_fit$lambda.1se, newx = x)
+```
+
+```{r}
+# calculate the mean-squared error (MSE) for this model
+mean((mdna_logodds$Age - cv_ridge_pred)^2)
+```
+
+```{r}
+# try:
+
+# correlation
+cor(y, cv_ridge_pred[, 1], method = "spearman")
+
+# visualise the relation between fitted values and the real age of the patients
+plot(y, cv_ridge_pred[, 1], xlim = c(0, 100), ylim = c(0, 100))
+abline(lm(cv_ridge_pred[, 1] ~ y))
+abline(0, 1, lty = 2, col = "gray55")
+```
+
+
+
+# LASSO regression
+
++ Fit a LASSO regression using the `glmnet()` function
++ Look at the results
+
+```{r}
+# fit a LASSO regression
+lasso_fit <- glmnet(x = x, y = y, alpha = 1, standardize = TRUE, family = "gaussian")
+
+# visualise the results
+plot(lasso_fit, xvar = "lambda")
+# alternative
+plot(lasso_fit)
+```
+
+**Question:** As $\lambda$ increases, this time what happens to the coefficients estimates?
+
+
+---
+
+
++ Perform a 10-fold cross validation for glmnet to determine the optimal value for lambda
++ Look at the results
++ Identify the $\lapbda_1$ that returns the lowest Mean-Squared Error (MSE)
+    + What is the value of the MSE?
++ Compare the results
+
+
+```{r}
+# fit LASSO regression
+cv_lasso_fit <- cv.glmnet(x = x, y = y, alpha = 1, standardize = TRUE, family = "gaussian", type.measure = "mse", nfold = 10)
+
+# visualise the results
+plot(cv_lasso_fit)
+```
+
+```{r}
+# lambdas
+cv_lasso_fit$lambda.min
+cv_lasso_fit$lambda.1se
+# log(cv_lasso_fit$lambda.min)
+# log(cv_lasso_fit$lambda.1se)
+
+
+# look at the coefficient values for the chosen lambdas
+cv_lasso_coef <- coef(cv_lasso_fit, s = cv_lasso_fit$lambda.1se)
+
+broom::tidy(cv_lasso_coef)
+
+# fitted values
+cv_lasso_pred <- predict(object = cv_lasso_fit, s = cv_lasso_fit$lambda.1se, newx = x)
+hist(cv_lasso_pred)
+```
+
+```{r}
+# calculate the mean-squared error (MSE) for this model
+mean((mdna_logodds$Age - cv_lasso_pred)^2)
+```
+
+```{r}
+# try:
+
+# correlation
+cor(y, cv_lasso_pred[, 1], method = "spearman")
+```
+
+
+# Try different values of `alpha`
+
++ Play around with alpha, and see if you can estimate a lower value for the MSE
+    + try `alpha = 0.5`
++ Compare the results with the Ridge and LASSO regression models
+
+```{r}
+# fit the cross-validation model
+cv_fit_a0.5 <- cv.glmnet(x = x, y = y, alpha = 0.5, standardize = TRUE, family = "gaussian", type.measure = "mse", nfold = 10)
+plot(cv_fit_a0.5)
+```
+
+
+```{r}
+# try:
+
+par(mfrow = c(2, 2))
+plot(cv_ridge_fit)
+plot(cv_fit_a0.5)
+plot(cv_lasso_fit)
+plot(log(cv_lasso_fit$lambda), cv_lasso_fit$cvm, col = 2, pch = 19, xlim = c(-6, 10))
+points(log(cv_fit_a0.5$lambda), cv_fit_a0.5$cvm, col = 3, pch = 19)
+points(log(cv_ridge_fit$lambda), cv_ridge_fit$cvm, col = 4, pch = 19)
+legend("topleft", legend = c("alpha = 1", "alpha = 0.5", "alpha = 0"), pch = 19, col = 2:4)
+abline(v = log(c(cv_ridge_fit$lambda.1se, cv_fit_a0.5$lambda.1se, cv_lasso_fit$lambda.1se)), col = 4:2, lty = 2)
+par(mfrow = c(1,1))
+```
+
+
+Rather than "guessing" the best value of alpha, the best approach is to loop through a sequence of determined values...
+
++ Loop through a 10-fold cross validation to determine the optimal value of $\lambda$ at different values of $\alpha$
+
+```{r}
+# alphas to try
+alphas <- seq(0, 1, 0.01)
+
+# loop sequence to generate the results at each alpha
+cv_fit_en <- lapply(seq(alphas), function(i) cv.glmnet(x = x, y = y, alpha = alphas[i], standardize = TRUE, family = "gaussian", type.measure = "mse", nfold = 10))
+```
+
+```{r}
+# alternative with a for loop:
+# cv_fit_en <- list()
+# for(i in seq(alphas)) {
+#   cv_fit_en[[i]] <- cv.glmnet(x = x, y = y, alpha = alphas[i], standardize = TRUE, family = "gaussian", type.measure = "mse", nfold = 10)
+# }
+```
+
+```{r}
+# look at the optimal values for lambda
+vec_lambda_en <- sapply(seq_along(cv_fit_en), function(i) cv_fit_en[[i]]$lambda.1se)
+
+
+# loop to estimate the fitted values of each 10-fold cross validated model
+pred_en <- lapply(seq_along(cv_fit_en), function(i) predict(cv_fit_en[[i]], s = vec_lambda_en[i], newx = x))
+
+
+# estimate the MSE of each model
+mse_en <- sapply(seq_along(cv_fit_en), function(i) mean((mdna_logodds$Age - pred_en[[i]])^2))
+
+
+# visualise the results
+plot(mse_en, type = "l")
+
+
+# minimum MSE value
+min(mse_en)
+
+
+# minimum MSE position
+which.min(mse_en)
+```
+
+```{r}
+# select the model with lower MSE
+cv_fit_elastic_net <- cv_fit_en[[which.min(mse_en)]]
+
+
+# lambda
+cv_fit_elastic_net$lambda.min
+cv_fit_elastic_net$lambda.1se
+
+
+# look at the coefficient values for the lambda
+cv_fit_elastic_net_coef <- coef(cv_fit_elastic_net, s = cv_fit_elastic_net$lambda.1se)
+broom::tidy(cv_fit_elastic_net_coef)
+
+# fitted values
+cv_fit_elastic_net_pred <- predict(cv_fit_elastic_net, s = cv_fit_elastic_net$lambda.1se, newx = x)
+
+hist(cv_fit_elastic_net_pred)
+```
+
+
+# Extending the analysis
+
++ To streamline this analysis you can apply the [_caret_](https://cran.r-project.org/web/packages/caret/index.html) package

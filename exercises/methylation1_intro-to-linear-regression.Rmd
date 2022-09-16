@@ -179,6 +179,9 @@ The values are given as methylated percentage.
 logodds_trans <- function(p) log(p / (1 - p))
 ```
 
++ Which model uses this transformation?
+    - logistic regression
+
 ```{r}
 # transform the percentage values into log-odds
 probe_logodds <- apply(mdna[, vec_probe], 2, logodds_trans)
@@ -238,11 +241,14 @@ Linear model using the first CpG probe, `r vec_probe[1]`.
 
 
 # linear regression: formula as Y ~ x
-# fit1 <- lm(___, data = mdna_logodds)
-
+fit1 <- lm(Age ~ cg17568996, data = mdna_logodds)
+fit1
 
 # look at the models' summary
-# summary(___)
+summary(fit1)
+
+plot(mdna_logodds$cg17568996, mdna_logodds$Age)
+abline(fit1)
 ```
 
 **Questions:**
@@ -255,27 +261,27 @@ We can look at the model's residuals distribution. Ideally, the distribution sho
 
 ```{r}
 # residual analysis
-# ___
+resid(fit1)
+fit1$residuals
 
 
 # density plot
-# plot(density(___))
+plot(density(fit1$residuals))
 
 
 # Q-Q plot
-# qqnorm(___)
-# qqline(___)
+qqnorm(fit1$residuals)
+qqline(fit1$residuals)
 ```
 
 Alternatively, we can apply formal hypothesis testing to infer on the residuals' normality.
 
 ```{r}
 # proposal 1: Shapiro-Wilk normality test
-# ___
-
+shapiro.test(fit1$residuals)
 
 # proposal 2: Lilliefors (Kolmogorov-Smirnov) normality test
-# nortest::lillie.test(___)
+nortest::lillie.test(fit1$residuals)
 ```
 
 Assuming this linear relation between age and the `r vec_probe[1]` methylation values, what are the model fitted values (i.e., the prediction of the mean response value to the coefficient values used to formulate the model)?
@@ -308,21 +314,31 @@ Perform the same analysis with the highest age-correlated probe, `r vec_probe_co
 # CpG probe: cg22736354
 
 # linear regression
-# fit2 <- ___
-
+fit2 <- lm(Age ~ cg22736354, data = mdna_logodds)
 
 # summary
-# ___
+summary(fit2)
 ```
 
 ```{r}
 # residuals analysis
-# ___
+par(mfrow = c(2,2))
+plot(fit2)
+par(mfrow = c(1,1))
 ```
 
 ```{r}
-# pred_fit2 <- ___
+methylation_interest <- c(0.1, 0.25, 0.5, 0.75, 0.9)
+logodds_trans(methylation_interest)
 
+pred_fit2 <- predict(fit2, 
+                     newdata = data.frame(
+                       cg22736354 = logodds_trans(methylation_interest)))
+pred_fit2
+summary(fit2)
+plot(mdna_logodds$cg22736354, mdna_logodds$Age)
+abline(fit2)
+abline(0,1, lty = 2)
 
 # fitted results
 # ___
@@ -343,14 +359,14 @@ From the results of the two linear models what do you see?
 ```{r}
 # try:
 
-# par(mfrow = c(1, 2))
-# plot(mdna_logodds$Age, predict(fit1), xlim = c(0, 100), ylim = c(0, 100), xlab = "Age, years", ylab = "Fitted age, fit1")
-# abline(lm(predict(fit1) ~ mdna_logodds$Age))
-# abline(0,1, lty = 2, col = "gray55")
-# plot(mdna_logodds$Age, predict(fit2), xlim = c(0, 100), ylim = c(0, 100), xlab = "Age, years", ylab = "Fitted age, fit2")
-# abline(lm(predict(fit2) ~ mdna_logodds$Age))
-# abline(0,1, lty = 2, col = "gray55")
-# par(mfrow = c(1, 1))
+par(mfrow = c(1, 2))
+plot(mdna_logodds$Age, predict(fit1), xlim = c(0, 100), ylim = c(0, 100), xlab = "Age, years", ylab = "Fitted age, fit1")
+abline(lm(predict(fit1) ~ mdna_logodds$Age))
+abline(0,1, lty = 2, col = "gray55")
+plot(mdna_logodds$Age, predict(fit2), xlim = c(0, 100), ylim = c(0, 100), xlab = "Age, years", ylab = "Fitted age, fit2")
+abline(lm(predict(fit2) ~ mdna_logodds$Age))
+abline(0,1, lty = 2, col = "gray55")
+par(mfrow = c(1, 1))
 ```
 
 
@@ -368,18 +384,17 @@ For this exercise, we will perform the same analysis for the `r vec_probe_cor[1]
 ```{r}
 # CpG: cg22736354
 
-
 # define gender as a factor with "female" as reference
 mdna_logodds$Gender <- relevel(factor(mdna_logodds$Gender), ref = "F")
 
 
 # fit the model
-# fit2_g <- ___
+fit2_g <- lm(Age ~ cg22736354 + Gender, data = mdna_logodds)
 
 
 # summary
-# ___
-
+summary(fit2)
+summary(fit2_g)
 ```
 
 ```{r}
@@ -405,51 +420,59 @@ mdna_logodds$Ethnicity <- relevel(factor(mdna_logodds$Ethnicity), ref = "Caucasi
 
 
 # fit the model
-# fit2_e <- ___
+fit2_e <- lm(Age ~ cg22736354 + Ethnicity, data = mdna_logodds)
 
 
 # summary
-# ___
+summary(fit2_e)
 
+plot(mdna_logodds$cg22736354, mdna_logodds$Age, col = mdna_logodds$Ethnicity, pch = 16)
+abline(fit2_e)
 ```
 
 ```{r}
 # assessing normality of residuals
-# ___
+shapiro.test(fit2_e$residuals)
+
+plot(density(fit2_e$residuals))
 ```
 
 ```{r}
 # predictions for age in europeans and mexicans
-# pred_e_cauc <- ___
-# pred_e_hisp <- ___
+pred_e_cauc <- predict(fit2_e, newdata = data.frame(
+  cg22736354 = mdna_logodds$cg22736354,
+  Ethnicity = "Caucasian"))
+pred_e_hisp <- predict(fit2_e, newdata = data.frame(
+  cg22736354 = mdna_logodds$cg22736354,
+  Ethnicity = "Hispanic"))
 ```
 
 ```{r}
 # try:
 
-# plot(mdna_logodds$Age, predict(fit2_e), xlim = c(0, 100), ylim = c(0, 100), col = mdna_logodds$Ethnicity, pch = 16)
-# abline(lm(predict(fit2_e) ~ mdna_logodds$Age))
-# abline(0,1, lty = 2)
+plot(mdna_logodds$Age, predict(fit2_e), xlim = c(0, 100), ylim = c(0, 100), col = mdna_logodds$Ethnicity, pch = 16)
+abline(lm(predict(fit2_e) ~ mdna_logodds$Age))
+abline(0,1, lty = 2)
 
-# plot(mdna_logodds$Age, predict(fit2_e), xlim = c(0, 100), ylim = c(0, 100), col = mdna_logodds$Ethnicity, pch = 16)
-# abline(0,1, lty = 2)
-# abline(lm(pred_e_cauc ~ mdna_logodds$Age), lwd = 3, col = 1)
-# abline(lm(pred_e_hisp ~ mdna_logodds$Age), lwd = 3, col = 2)
+plot(mdna_logodds$Age, predict(fit2_e), xlim = c(0, 100), ylim = c(0, 100), col = mdna_logodds$Ethnicity, pch = 16)
+abline(0,1, lty = 2)
+abline(lm(pred_e_cauc ~ mdna_logodds$Age), lwd = 3, col = 1)
+abline(lm(pred_e_hisp ~ mdna_logodds$Age), lwd = 3, col = 2)
 ```
 
 
-## **2.3** Interaction Interaction `cg22736354:Ethnicity`
+## **2.3** Interaction Interaction `cg22736354*Ethnicity`
 
 + Try to add an interaction term between the two covariates used in the model
 + Estimate the values for $\beta_0$ and $\beta_1$ on each population group
 
 ```{r}
 # adding ethnicity interaction
-# fit3 <- ___
+fit3 <- lm(Age ~ cg22736354*Ethnicity, data = mdna_logodds)
 
 
 # summary
-# ___
+summary(fit3)
 ```
 
 ```{r}
